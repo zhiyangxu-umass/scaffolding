@@ -18,3 +18,8 @@ dist/
 .mypy_cache
 .history
 
+dataset/
+experiments/
+checkpoints/
+run.sh
+prepare_data/
