@@ -1,0 +1,2 @@
+#baseline training
+python -m allennlp.run train_c training_config/consist/consist_warmup_srl_constit.json --serialization-dir log/10_percent_srl-constit_warmup_baseline

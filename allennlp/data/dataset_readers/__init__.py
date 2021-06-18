@@ -14,6 +14,8 @@ from allennlp.data.dataset_readers.sequence_tagging import SequenceTaggingDatase
 from allennlp.data.dataset_readers.snli import SnliReader
 from allennlp.data.dataset_readers.semantic_role_labeling import SrlReader
 from allennlp.data.dataset_readers.ontonotes.crf_srl_reader import CrfSrlReader
+from allennlp.data.dataset_readers.ontonotes.consist_srl_reader import ConsistSrlReader
+from allennlp.data.dataset_readers.ontonotes.consist_constit_reader import ConsistConstitReader
 from allennlp.data.dataset_readers.ontonotes.syntactic_constituent_reader import SyntacticConstitReader
 from allennlp.data.dataset_readers.framenet.full_text_reader import FrameNetFullTextReader
 from allennlp.data.dataset_readers.seq2seq import Seq2SeqDatasetReader

@@ -21,17 +21,17 @@
       }
     }
   },
-  "train_data_path": "data/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/train/",
-  "aux_train_data_path": "data/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/train/",
-  "validation_data_path": "data/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/development/",
-  "test_data_path": "data/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/test/",
+  "train_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/train/",
+  "aux_train_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/train/",
+  "validation_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/development/",
+  "test_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/test/",
   "model": {
     "type": "scaffolded_pb_srl",
     "text_field_embedder": {
       "tokens": {
         "type": "embedding",
         "embedding_dim": 100,
-        "pretrained_file": "data/glove.6B.100d.txt.gz",
+        "pretrained_file": "dataset/glove_embedding/glove.6B.100d.txt.gz",
         "trainable": true
       }
     },

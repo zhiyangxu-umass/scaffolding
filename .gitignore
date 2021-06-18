@@ -24,3 +24,4 @@ experiments/
 checkpoints/
 run.sh
 prepare_data/
+log/

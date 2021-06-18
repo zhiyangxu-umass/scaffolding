@@ -416,3 +416,6 @@ class Vocabulary:
 
     def get_vocab_size(self, namespace: str = 'tokens') -> int:
         return len(self._token_to_index[namespace])
+
+    def get_namespaces(self) -> Set[str]:
+        return set(self._index_to_token.keys())

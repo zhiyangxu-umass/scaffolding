@@ -7,6 +7,7 @@ from allennlp.commands.serve import Serve
 from allennlp.commands.predict import Predict
 from allennlp.commands.train import Train
 from allennlp.commands.train_scaffold import TrainScaffold
+from allennlp.commands.train_consist import TrainConsist
 from allennlp.commands.evaluate import Evaluate
 from allennlp.commands.subcommand import Subcommand
 from allennlp.service.predictors import DemoModel
@@ -53,6 +54,7 @@ def main(prog: str = None,
         # Default commands
         "train": Train(),
         "train_s": TrainScaffold(),
+        "train_c": TrainConsist(),
         "evaluate": Evaluate(),
         "predict": Predict(predictor_overrides),
         "serve": Serve(model_overrides),

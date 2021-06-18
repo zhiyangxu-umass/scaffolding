@@ -89,8 +89,9 @@ class ConsistSrlReader(DatasetReader):
             return [self.text_to_instance(tokens, verb_label, dummy_verb_index, tags, spans)]
         else:
             instances = []
-
+            # print(tokens)
             for verb_index, tags in zip(verbal_predicates, predicate_argument_labels):
+                # print(verb_index, tags)
                 verb_label = [0 for _ in sentence_tokens]
                 verb_label[verb_index] = 1
                 spans = self._convert_bio_into_matrix(tags)
@@ -106,17 +107,12 @@ class ConsistSrlReader(DatasetReader):
 
         instances = []
 
-        sentence: List[str] = []
-        verbal_predicates: List[int] = []
-        predicate_argument_labels: List[List[str]] = []
-        current_span_label: List[Optional[str]] = []
-
         logger.info(
             "Reading SRL instances from dataset files at: %s", file_path)
         
-        input_file = pickle.load( open( "file_path", "rb" ) )
+        input_file = pickle.load( open( file_path, "rb" ) )
 
-        for line in input_file:
+        for line in tqdm.tqdm(input_file):
             instances.extend(self._process_sentence(line["sentence"],
                                                     line["verbal_predicates"],
                                                     line["predicate_argument_labels"]))
@@ -154,6 +150,7 @@ class ConsistSrlReader(DatasetReader):
         span_labels: Optional[List[str]] = [
         ] if gold_spans is not None else None
 
+        # print(tokens,len(gold_spans))
         for j in range(len(tokens)):
             for diff in range(self.max_span_width):
                 width = diff
@@ -166,6 +163,7 @@ class ConsistSrlReader(DatasetReader):
                 span_ends.append(IndexField(j, text_field))
 
                 if gold_spans is not None:
+                    # print(j,diff,gold_spans)
                     current_label = gold_spans[j][diff]
                     span_labels.append(current_label)
 
@@ -187,10 +185,10 @@ class ConsistSrlReader(DatasetReader):
         return Instance(fields)
 
     @classmethod
-    def from_params(cls, params: Params) -> 'CrfSrlReader':
+    def from_params(cls, params: Params) -> 'ConsistSrlReader':
         token_indexers = TokenIndexer.dict_from_params(
             params.pop('token_indexers', {}))
         max_span_width = params.pop("max_span_width")
         params.assert_empty(cls.__name__)
-        return CrfSrlReader(token_indexers=token_indexers,
+        return ConsistSrlReader(token_indexers=token_indexers,
                             max_span_width=max_span_width)
