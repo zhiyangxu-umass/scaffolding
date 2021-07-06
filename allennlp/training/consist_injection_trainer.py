@@ -50,13 +50,12 @@ class TensorboardWriter:
             self._validation_log.add_scalar(name, value, global_step)
 
 
-class ConsistTrainer:
+class ConsistInjectionTrainer:
     def __init__(self,
                  model: Model,
                  optimizer: torch.optim.Optimizer,
                  iterator: DataIterator,
                  train_dataset: Dataset,
-                 warmup_dataset: Dataset,
                  aux_iterator: DataIterator,
                  aux_train_dataset: Dataset,
                  mixing_ratio: float = 1.0,
@@ -126,7 +125,6 @@ class ConsistTrainer:
         self._iterator = iterator
         self._optimizer = optimizer
         self._train_dataset = train_dataset
-        self._warmup_dataset = warmup_dataset
         self._validation_dataset = validation_dataset
 
         self._aux_iterator = aux_iterator
@@ -183,21 +181,23 @@ class ConsistTrainer:
         if self._grad_norm:
             clip_grad_norm(self._model.parameters(), self._grad_norm)
 
-    def _batch_loss(self, batch: torch.Tensor, for_training: bool, aux_batch: torch.Tensor = None) -> torch.Tensor:
+    def _batch_loss(self, batch: torch.Tensor = None, for_training: bool = True, aux_batch: torch.Tensor = None) -> torch.Tensor:
         """
         Does a forward pass on the given batch and returns the ``loss`` value in the result.
         If ``for_training`` is `True` also applies regularization penalty.
         """
-        srl_output_dict = self._model(**batch,srl_batch=True)
+        total_loss = 0.0
+        if batch is not None:
+            srl_output_dict = self._model(**batch,srl_batch=True)
 
-        try:
-            srl_loss = srl_output_dict["loss"]
-            if for_training:
-                srl_loss += self._model.get_regularization_penalty()
-        except KeyError:
-            raise ConfigurationError("The model you are trying to optimize does not contain a"
-                                     " 'loss' key in the output of model.forward(inputs).")
-
+            try:
+                srl_loss = srl_output_dict["loss"]
+                if for_training:
+                    srl_loss += self._model.get_regularization_penalty()
+            except KeyError:
+                raise ConfigurationError("The model you are trying to optimize does not contain a"
+                                        " 'loss' key in the output of model.forward(inputs).")
+            total_loss += srl_loss    
         if aux_batch is not None:
             constit_output_dict = self._model(**aux_batch,srl_batch=False)
             try:
@@ -206,11 +206,8 @@ class ConsistTrainer:
                     constit_loss += self._model.get_regularization_penalty()
             except KeyError:
                 raise ConfigurationError("No `loss` key in output_dict for auxiliary batch.")
-            total_loss = srl_loss + self._mixing_ratio * constit_loss
-        else:
-            total_loss = srl_loss
+            total_loss += self._mixing_ratio * constit_loss
 
-        # print("total loss: ",total_loss)
         return total_loss
 
     def _get_metrics(self, total_loss: float, batch_num: int, reset: bool = False) -> dict:
@@ -232,60 +229,49 @@ class ConsistTrainer:
         # Set the model to "train" mode.
         self._model.train()
 
+        # Get tqdm for the training batches
+        train_generator = self._iterator(self._train_dataset,
+                                         num_epochs=1,
+                                         cuda_device=self._cuda_device)
+        num_training_batches = self._iterator.get_num_batches(self._train_dataset)
+        train_generator_tqdm = tqdm.tqdm(train_generator,
+                                         disable=self._no_tqdm,
+                                         total=num_training_batches)
+        if self._aux_train_dataset is not None:
+            aux_train_generator = self._aux_iterator(self._aux_train_dataset,
+                                                    num_epochs=1,
+                                                    cuda_device=self._cuda_device)
 
         self._last_log = time.time()
         batch_num = 0
 
-        scaffolded_training = False
-        #-----------------uncomment this for constraints learning-------------------#
+        consist_training = False
         if epoch > self._warmup_epoch:
-            scaffolded_training = True
-            logger.info("Consistant Training")
+            consist_training = True
+            logger.info("consist Training")
         else:
             logger.info("Training")
-        
-
-        if scaffolded_training:
-        # Get tqdm for the training batches
-            train_generator = self._iterator(self._train_dataset,
-                                            num_epochs=1,
-                                            cuda_device=self._cuda_device)
-            num_training_batches = self._iterator.get_num_batches(self._train_dataset)
-            train_generator_tqdm = tqdm.tqdm(train_generator,
-                                            disable=self._no_tqdm,
-                                            total=num_training_batches)
-            if self._aux_train_dataset is not None:
-                aux_train_generator = self._aux_iterator(self._aux_train_dataset,
-                                                        num_epochs=1,
-                                                        cuda_device=self._cuda_device)
-        else:
-            #warmup epochs
-            if not self._warmup_dataset is None:
-                train_generator = self._iterator(self._warmup_dataset,
-                                                num_epochs=1,
-                                                cuda_device=self._cuda_device)
-                num_training_batches = self._iterator.get_num_batches(self._warmup_dataset)
-            else:
-                train_generator = self._iterator(self._train_dataset,
-                                                num_epochs=1,
-                                                cuda_device=self._cuda_device)
-                num_training_batches = self._iterator.get_num_batches(self._train_dataset)
-            train_generator_tqdm = tqdm.tqdm(train_generator,
-                                            disable=self._no_tqdm,
-                                            total=num_training_batches)
-            if self._aux_train_dataset is not None:
-                aux_train_generator = self._aux_iterator(self._aux_train_dataset,
-                                                        num_epochs=1,
-                                                        cuda_device=self._cuda_device)
         if self._aux_train_dataset is not None:
             for batch, aux_batch in zip(train_generator_tqdm, aux_train_generator):
                 batch_num += 1
                 self._optimizer.zero_grad()
 
-                if scaffolded_training:
-                    loss = self._batch_loss(batch, for_training=True, aux_batch=aux_batch)
+                if consist_training:
+                    self._model.constit2srl_consist = True
+                    loss = self._batch_loss(aux_batch=aux_batch, for_training=True)
+                    loss.backward()
+                    self._rescale_gradients()
+                    self._optimizer.step()
+                    self._model.constit2srl_consist = False
+                    loss = self._batch_loss(batch=batch, for_training=True, aux_batch=aux_batch)
+                    # loss.backward()
+                    # self._rescale_gradients()
+                    # self._optimizer.step()
+                    # loss = self._batch_loss(batch=batch, for_training=True)
+
                 else:
-                    loss = self._batch_loss(batch, for_training=True)
+                    self._model.constit2srl_consist = False
+                    loss = self._batch_loss(batch=batch, for_training=True, aux_batch=aux_batch)
 
                 loss.backward()
 
@@ -486,10 +472,8 @@ class ConsistTrainer:
         for epoch in range(epoch_counter, self._num_epochs):
             epoch_start_time = time.time()
             train_metrics = self._train_epoch(epoch)
-            warmup_epoch = True
-            if epoch >= self._warmup_epoch:
-                warmup_epoch = False
-            if self._validation_dataset is not None and not warmup_epoch:
+
+            if self._validation_dataset is not None:
                 # We have a validation set, so compute all the metrics on it.
                 val_loss, num_batches = self._validation_loss()
                 val_metrics = self._get_metrics(val_loss, num_batches, reset=True)
@@ -621,11 +605,10 @@ class ConsistTrainer:
                     iterator: DataIterator,
                     aux_iterator: DataIterator,
                     train_dataset: Dataset,
-                    warmup_dataset: Dataset,
                     aux_train_dataset: Dataset,
                     validation_dataset: Optional[Dataset],
                     params: Params,
-                    files_to_archive: Dict[str, str]) -> 'ConsistTrainer':
+                    files_to_archive: Dict[str, str]) -> 'ConsistInjectionTrainer':
 
         patience = params.pop("patience", 2)
         validation_metric = params.pop("validation_metric", "-loss")
@@ -650,11 +633,10 @@ class ConsistTrainer:
         warmup_epoch = params.pop("warmup_epoch", -1)
 
         params.assert_empty(cls.__name__)
-        return ConsistTrainer(model=model,
+        return ConsistInjectionTrainer(model=model,
                                optimizer=optimizer,
                                iterator=iterator,
                                train_dataset=train_dataset,
-                               warmup_dataset=warmup_dataset,
                                aux_iterator=aux_iterator,
                                aux_train_dataset=aux_train_dataset,
                                mixing_ratio=mixing_ratio,

@@ -1,3 +1,4 @@
 from allennlp.training.trainer import Trainer
 from allennlp.training.scaffold_trainer import ScaffoldTrainer
 from allennlp.training.consist_trainer import ConsistTrainer
+from allennlp.training.consist_injection_trainer import ConsistInjectionTrainer

@@ -6,6 +6,9 @@
         "tokens": {
           "type": "single_id",
           "lowercase_tokens": true
+        },
+        "elmo": {
+          "type": "elmo_characters"
         }
       }
     },
@@ -18,6 +21,9 @@
         "tokens": {
           "type": "single_id",
           "lowercase_tokens": true
+        },
+        "elmo": {
+          "type": "elmo_characters"
         }
       }
     },
@@ -28,6 +34,9 @@
           "tokens": {
             "type": "single_id",
             "lowercase_tokens": true
+          },
+          "elmo": {
+            "type": "elmo_characters"
           }
         }
       },
@@ -39,9 +48,13 @@
           "tokens": {
             "type": "single_id",
             "lowercase_tokens": true
+          },
+          "elmo": {
+            "type": "elmo_characters"
           }
         }
       },
+
     "srl_train_data_path": "dataset/processed_onto/train/train.srl",
     "constit_train_data_path": "dataset/processed_onto/train/train.all",
     "srl_validation_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/development/",
@@ -54,6 +67,13 @@
             "embedding_dim": 100,
             "pretrained_file": "dataset/glove_embedding/glove.6B.100d.txt.gz",
             "trainable": true
+          },
+          "elmo":{
+            "type": "elmo_token_embedder",
+            "options_file": "dataset/elmo/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+            "weight_file": "dataset/elmo/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+            "do_layer_norm": false,
+            "dropout": 0.2
           }
         },
         "initializer": [
@@ -64,7 +84,7 @@
         ],
         "stacked_encoder": {
           "type": "alternating_highway_lstm_cuda",
-          "input_size": 200,
+          "input_size": 1224,
           "hidden_size": 300,
           "num_layers": 6,
           "recurrent_dropout_probability": 0.1
@@ -74,7 +94,7 @@
           "num_layers": 2,
           "hidden_dims": 150,
           "activations": "relu",
-          "dropout": 0.2
+          "dropout": 0.5
         },
         "binary_feature_dim": 100,
         "max_span_width": 13,
@@ -110,7 +130,7 @@
       "trainer": {
         "num_epochs": 100,
         "grad_clipping": 1.0,
-        "mixing_ratio": 1,
+        "mixing_ratio": 1.0,
         "warmup_epoch": 5,
         "patience": 20,
         "validation_metric": "+f1-measure-overall",

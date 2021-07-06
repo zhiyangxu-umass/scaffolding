@@ -1,6 +1,6 @@
 {
     "srl_dataset_reader": {
-      "type": "consist_srl",
+      "type": "crf_srl",
       "max_span_width": 13,
       "token_indexers": {
         "tokens": {
@@ -10,13 +10,13 @@
       }
     },
     "constit_dataset_reader": {
-      "type": "consist_constit",
+      "type": "syntactic_constit",
       "max_span_width": 13,
       "label_namespace": "constit_labels",
-      "constraints_type": "gold_srl",
       "token_indexers": {
         "tokens": {
           "type": "single_id",
+          "no_counter": true,
           "lowercase_tokens": true
         }
       }
@@ -42,12 +42,14 @@
           }
         }
       },
-    "srl_train_data_path": "dataset/processed_onto/train/train.srl",
-    "constit_train_data_path": "dataset/processed_onto/train/train.all",
+
+    "srl_train_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/train/",
     "srl_validation_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/development/",
+    "constit_validation_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/development/",
     "srl_test_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/test/",
+    "constit_test_data_path": "dataset/conll-formatted-ontonotes-5.0-12/conll-formatted-ontonotes-5.0/data/test/",
     "model": {
-        "type": "consist_injection_srl",
+        "type": "consist_srl_constit",
         "text_field_embedder": {
           "tokens": {
             "type": "embedding",
@@ -80,9 +82,8 @@
         "max_span_width": 13,
         "feature_size": 2,
         "loss_type": "hamming",
-        "np_pp_constits": false,
-        "unlabeled_constits": true,
-        "constit2srl_consist": true
+        "np_pp_constits": true,
+        "unlabeled_constits": false
       },
       "srl_iterator": {
         "type": "bucket",
@@ -110,8 +111,8 @@
       "trainer": {
         "num_epochs": 100,
         "grad_clipping": 1.0,
-        "mixing_ratio": 1,
-        "warmup_epoch": 5,
+        "mixing_ratio": 1.0,
+        "warmup_epoch": -1,
         "patience": 20,
         "validation_metric": "+f1-measure-overall",
         "cuda_device": 0,

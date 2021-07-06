@@ -49,6 +49,8 @@ class NonBioSpanBasedF1Measure(Metric):
         """
         self._label_vocabulary = vocabulary.get_index_to_token_vocabulary(
             tag_namespace)
+        # print("tagnamespace",tag_namespace)
+        # print(self._label_vocabulary)
         self._ignore_classes = ignore_classes or []
         self.num_classes = vocabulary.get_vocab_size(tag_namespace)
 
@@ -126,9 +128,12 @@ class NonBioSpanBasedF1Measure(Metric):
                 # completely padded. These contribute nothing, so we skip these rows.
                 continue
 
+            # print("gold spans #################")
             gold_spans = self._extract_spans(gold_sequence[:length].tolist(), merge=True)
+            # print(gold_spans)
+            # print("predicred spans #################")
             predicted_spans = self._extract_spans(predicted_sequence[:length].tolist(), merge=True)
-
+            # print(predicted_spans)
             self._gold_spans.append(gold_spans)
             self._predicted_spans.append(predicted_spans)
 
@@ -301,6 +306,7 @@ class NonBioSpanBasedF1Measure(Metric):
         span_start = 0
         span_end = 0
 
+        # print(tag_matrix)
         for span_end, diff_list in enumerate(tag_matrix):
             for diff, tag_id in enumerate(diff_list):
                 # Actual tag.
@@ -313,6 +319,8 @@ class NonBioSpanBasedF1Measure(Metric):
                     continue
                 span_start = span_end - diff
                 spans.add((span_start, span_end, tag_string))
+        # print("spans ##########################")
+        # print(spans)
         if merge:
             return self.merge_neighboring_spans(spans)
         return spans

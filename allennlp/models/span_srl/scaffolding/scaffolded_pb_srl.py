@@ -274,7 +274,7 @@ class ScaffoldedPropBankSRL(Model):
         # During training, we only really care about the overall
         # metrics, so we filter for them here.
         # TODO(Mark): This is fragile and should be replaced with some verbosity level in Trainer.
-        return {x: y for x, y in metric_dict.items() if "overall" in x or 'loss' in x}
+        return {x: y for x, y in metric_dict.items()}
         # return metric_dict
 
     @classmethod

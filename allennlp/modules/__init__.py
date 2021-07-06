@@ -19,3 +19,4 @@ from allennlp.modules.time_distributed import TimeDistributed
 from allennlp.modules.token_embedders import TokenEmbedder
 from allennlp.modules.scalar_mix import ScalarMix
 from allennlp.modules.semi_markov_crf import SemiMarkovConditionalRandomField
+from allennlp.modules.semi_markov_crf_with_transition import SemiMarkovConditionalRandomFieldWithTransition

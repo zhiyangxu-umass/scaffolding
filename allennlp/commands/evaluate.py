@@ -21,12 +21,14 @@ and report any metrics calculated by the model.
     --cuda-device CUDA_DEVICE
                             id of GPU to use (if any)
 """
-from typing import Dict, Any
+from typing import Dict, Any, TextIO, Optional, List, Set, Tuple
 import argparse
 import logging
 import os
 import tqdm
 import json
+
+import torch
 
 from allennlp.commands.subcommand import Subcommand
 from allennlp.common.util import prepare_environment
@@ -36,7 +38,7 @@ from allennlp.data.iterators import BasicIterator
 from allennlp.models.archival import load_archive
 from allennlp.common.params import Params
 from allennlp.models.model import Model
-from typing import TextIO, Optional, List, Set, Tuple
+from allennlp.nn import util
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -70,6 +72,12 @@ class Evaluate(Subcommand):
                                  help='id of GPU to use (if any)')
         cuda_device.add_argument(
             '--cuda_device', type=int, help=argparse.SUPPRESS)
+        checkpoint = subparser.add_mutually_exclusive_group(
+            required=True)
+        checkpoint.add_argument('--checkpoint',
+                                        type=str,
+                                        default=None,
+                                        help='load model from a specific checkpoint')
 
         subparser.add_argument('-o', '--overrides',
                                type=str,
@@ -243,11 +251,18 @@ def evaluate_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     config = archive.config
     prepare_environment(config)
     model = archive.model
+    if not args.checkpoint is None:
+        logging.info("Loading model from %s",args.checkpoint)
+        model_state = torch.load(args.checkpoint, map_location=util.device_mapping(args.cuda_device))
+        model.load_state_dict(model_state)
     model.eval()
 
     # Load the evaluation data
     # use this for srl
-    dataset_reader = DatasetReader.from_params(config.pop('dataset_reader'))
+    dataset_params = config.pop('dataset_reader', None)
+    if dataset_params is None:
+        dataset_params = config.pop('srl_dataset_reader')
+    dataset_reader = DatasetReader.from_params(dataset_params)
     # use this for constituents
     # dataset_params = Params.from_file("./training_config/scaffolding/scaffolded_pb_srl.json")
     # dataset_reader = DatasetReader.from_params(dataset_params.pop('aux_dataset_reader'))

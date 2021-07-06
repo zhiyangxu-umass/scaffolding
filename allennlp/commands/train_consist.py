@@ -138,6 +138,7 @@ def train_model(params: Params, serialization_dir: str) -> Model:
     srl_train_data = srl_train_dataset_reader.read(srl_train_data_path)
     all_srl_datasets: Dict[str, Dataset] = {"srl_train": srl_train_data}
 
+    warmup_data = None
     # 4. constit train data
     constit_train_data_path = params.pop('constit_train_data_path', None)
     if constit_train_data_path is not None:
@@ -152,6 +153,16 @@ def train_model(params: Params, serialization_dir: str) -> Model:
             constit_train_data = Dataset(constit_train_data.instances + aux_sample)
             logger.info("Inflating constit train data from %d to %d samples",
                         constit_train_size, len(constit_train_data.instances))
+        else:
+            srl_train_size = len(srl_train_data.instances) 
+            difference =  constit_train_size - srl_train_size
+            aux_sample = [random.choice(srl_train_data.instances) for _ in range(difference)]
+            warmup_data = Dataset(srl_train_data.instances)
+            all_srl_datasets["warmup_data"] = warmup_data
+            srl_train_data = Dataset(srl_train_data.instances + aux_sample)
+            logger.info("Inflating srl train data from %d to %d samples and create warmup data with %d samples",
+                        srl_train_size, len(srl_train_data.instances), len(warmup_data.instances))
+            all_srl_datasets["srl_train"] = srl_train_data
     else:
         logger.info("No constit training data provided")
         constit_train_data = None
@@ -225,6 +236,8 @@ def train_model(params: Params, serialization_dir: str) -> Model:
     constit_iterator = DataIterator.from_params(params.pop("constit_iterator"))
 
     srl_train_data.index_instances(vocab)
+    if warmup_data is not None:
+        warmup_data.index_instances(vocab)
     if constit_train_data is not None:
         constit_train_data.index_instances(vocab)
 
@@ -240,6 +253,7 @@ def train_model(params: Params, serialization_dir: str) -> Model:
                                           iterator=srl_iterator,
                                           aux_iterator=constit_iterator,
                                           train_dataset=srl_train_data,
+                                          warmup_dataset = warmup_data,
                                           aux_train_dataset=constit_train_data,
                                           validation_dataset=srl_validation_data,
                                           params=trainer_params,

@@ -380,8 +380,8 @@ class CrfSrlReader(DatasetReader):
         # Span-based output fields.
         span_starts: List[Field] = []
         span_ends: List[Field] = []
-        # span_mask: List[int] = [1 for _ in range(
-        #     len(tokens) * self.max_span_width)]
+        span_mask: List[int] = [1 for _ in range(
+            len(tokens) * self.max_span_width)]
         span_labels: Optional[List[str]] = [
         ] if gold_spans is not None else None
 
@@ -390,7 +390,7 @@ class CrfSrlReader(DatasetReader):
                 width = diff
                 if j - diff < 0:
                     # This is an invalid span.
-                    # span_mask[j * self.max_span_width + diff] = 0
+                    span_mask[j * self.max_span_width + diff] = 0
                     width = j
 
                 span_starts.append(IndexField(j - width, text_field))
@@ -402,14 +402,14 @@ class CrfSrlReader(DatasetReader):
 
         start_fields = ListField(span_starts)
         end_fields = ListField(span_ends)
-        # span_mask_fields = SequenceLabelField(span_mask, start_fields)
+        span_mask_fields = SequenceLabelField(span_mask, start_fields)
 
         fields: Dict[str, Field] = {'tokens': text_field,
                                     'verb_indicator': verb_field,
                                     'target_index': target_field,
                                     'span_starts': start_fields,
-                                    'span_ends': end_fields}
-                                    # 'span_mask': span_mask_fields}
+                                    'span_ends': end_fields,
+                                    'span_mask': span_mask_fields}
 
         if gold_spans:
             fields['tags'] = SequenceLabelField(span_labels, start_fields)

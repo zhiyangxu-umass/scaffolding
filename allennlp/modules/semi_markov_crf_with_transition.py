@@ -14,7 +14,7 @@ from allennlp.nn.util import logsumexp, ones_like
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-class SemiMarkovConditionalRandomField(torch.nn.Module):
+class SemiMarkovConditionalRandomFieldWithTransition(torch.nn.Module):
     """
     This module uses the "forward-backward" algorithm to compute the log-likelihood
     of its inputs assuming a 0th-order semi-Markov conditional random field model.
@@ -49,6 +49,17 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         self.false_positive_penalty = false_positive_penalty
         self.false_negative_penalty = false_negative_penalty
 
+        # Also need logits for transitioning from "start" state and to "end" state.
+        self.transitions = torch.nn.Parameter(torch.Tensor(num_tags, num_tags))
+        self.start_transitions = torch.nn.Parameter(torch.Tensor(num_tags))
+        self.end_transitions = torch.nn.Parameter(torch.Tensor(num_tags))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.xavier_normal(self.transitions)
+        torch.nn.init.normal(self.start_transitions)
+        torch.nn.init.normal(self.end_transitions)
+
     def _input_likelihood(self,
                           logits: torch.Tensor,
                           text_mask: torch.Tensor,
@@ -67,72 +78,41 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         cost : shape (batch_size, sequence_length, max_span_width, num_tags)
         """
         batch_size, sequence_length, max_span_width, num_tags = logits.size()
-        # This way of masking introduces nan gradients, avoid!
-        # span_mask = span_mask.view(batch_size, -1, self.maximum_segment_length, 1) * text_mask.view(
-        #     batch_size, -1, 1, 1)
-        # logits = logits + torch.log(span_mask.float())
-        if tag_mask is None:
-            tag_mask = Variable(torch.ones(batch_size, num_tags).cuda())
-        else:
-            tmask_sum = torch.sum(tag_mask, 1).data
-            assert (tmask_sum > 0).all()
+        #S, K, B, T
+        logits = logits.permute(1,2,0,3).contiguous()
+        # B
+        c_lens = torch.sum(text_mask.clone(),dim=1)
+        # S, B
+        text_mask = text_mask.float().transpose(0, 1).contiguous()
+        alpha = Variable(torch.zeros(batch_size,sequence_length+1,num_tags).cuda(), requires_grad=True)
+        alpha_out_sum = Variable(logits.data.new(batch_size,max_span_width, num_tags).fill_(0))
 
-        # shape: (sequence_length, max_span_width, batch_size, num_tags)
-        logits = logits.transpose(0, 1).contiguous()
-        logits = logits.transpose(1, 2).contiguous()
-
-        # cost = cost.transpose(0, 1).contiguous()
-        # cost = cost.transpose(1, 2).contiguous()
-
-        # Create a mask to ignore the dummy tag '*' denoting not a span.
-        default_tag_mask = torch.zeros(num_tags).cuda()
-        default_tag_mask[self.default_tag] = float("-inf")
-        default_tag_mask = Variable(default_tag_mask.view(1, 1, -1))
-
-        # Move to log space.
-        tag_mask = torch.log(tag_mask).view(
-            1, batch_size, num_tags) + default_tag_mask
-
-        # Initial alpha is the (sequence_length, batch_size) tensor of likelihoods containing the
-        # logits for the first dummy timestep.
-        alpha = Variable(torch.cuda.FloatTensor([
-            [0.0 for _ in range(batch_size)]]), requires_grad=True)
-
-        # For each j we compute logits for all the segmentations of length j.
-        for j in range(sequence_length):
+        for j, logit in enumerate(logits):
             # Depending on where the span ends, i.e. j, the maximum width of the spans considered changes.
-            width = max_span_width
-            if j < max_span_width - 1:
-                width = j + 1
+            for d in range(min(self.max_span_width, sequence_length)):
+                if d<j:
+                    emit_scores = logits[j][d].view(batch_size,1,num_tags)
+                    transition_scores = self.transitions.view(1,num_tags,num_tags)
+                    broadcast_alpha = alpha[j-d].view(batch_size,num_tags,1)
+                    inner = broadcast_alpha + emit_scores + transition_scores
+                    inner_sum = logsumexp(inner,dim=1) #B, tags
+                elif d==j:
+                    emit_scores = logits[j][d].view(batch_size,1,num_tags)
+                    transition_scores = self.start_transitions.view(1,1,num_tags)
+                    inner = emit_scores + transition_scores
+                    inner_sum = inner.squeeze(1)
+                alpha_out_sum[:,d,:] = inner_sum
+            alpha_nxt = log_sum_exp(alpha_out_sum , dim=1) # B, tags
+            mask = Variable((c_lens > 0).float().unsqueeze(-1))
+            alpha_nxt = mask * alpha_nxt + (1 - mask) * alpha[:, j, :].clone()
+            c_lens= c_lens - 1
 
-            # Reverse the alpha so it gets added to the correct logits.
-            idx = Variable(torch.cuda.LongTensor(
-                [i for i in range(j, j - width, -1)]))
-            reversed_alpha = alpha.index_select(dim=0, index=idx)
-            # Tensorize and broadcast along the max_span_width dimension.
-            broadcast_alpha = reversed_alpha.view(width, batch_size, 1)
+            alpha[:,j+1, :] = alpha_nxt
 
-            # shape: (max_span_width, batch_size, num_tags)
-            logits_at_j = logits[j]
-            start_indices = Variable(torch.cuda.LongTensor(range(width)))
-            span_factors = logits_at_j.index_select(dim=0, index=start_indices)
-            # span_costs = cost[j].index_select(dim=0, index=start_indices)
+        partition = alpha[:,-1,:] + self.end_transitions.view(1,num_tags)
+        Z = logsumexp(partition)
 
-            # Logsumexp the scores over the num_tags axis.
-            alpha_along_arglabels = logsumexp(
-                broadcast_alpha + span_factors + tag_mask)
-
-            # Logsumexp the scores over the max_span_width axis.
-            alpha_at_j = logsumexp(alpha_along_arglabels,
-                                   dim=0).view(1, batch_size)
-            alpha = torch.cat([alpha, alpha_at_j], dim=0)
-
-        # Get the last positions for all alphas in the batch.
-        actual_lengths = torch.sum(text_mask, dim=1).view(1, batch_size)
-        # Finally we return the alphas along the last "valid" positions.
-        # shape: (batch_size)
-        partition = alpha.gather(dim=0, index=actual_lengths)
-        return partition
+        return Z
 
     def _joint_likelihood(self,
                           logits: torch.Tensor,
@@ -147,19 +127,22 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         tags : shape (batch_size, sequence_length, max_span_width)
         mask : shape (batch_size, sequence_length)
         """
-        batch_size, sequence_length, _, _ = logits.shape
-
+        batch_size, sequence_length, max_span, num_tags = logits.shape
         # Transpose to shape: (sequence_length, max_span_width, batch_size, num_tags)
-        logits = logits.transpose(0, 1).contiguous()
-        logits = logits.transpose(1, 2).contiguous()
+        logits = logits.permute(1,2,0,3).contiguous()
         # Transpose to shape: (sequence_length, batch_size)
         mask = mask.float().transpose(0, 1).contiguous()
         # Transpose to shape: (sequence_length, max_span_width, batch_size)
-        tags = tags.transpose(0, 1).contiguous()
-        tags = tags.transpose(1, 2).contiguous()
+        tags = tags.permute(1,2,0).contiguous()
 
         default_tags = Variable(
-            self.default_tag * torch.ones(batch_size).long().cuda())
+            self.default_tag * torch.ones(batch_size).long().cuda()) #batch szie
+
+
+        # Broadcast the transition scores to one per batch element
+        broadcast_transitions = self.transitions.view(
+            1, 1, num_tags, num_tags).expand(batch_size, self.max_span_width, num_tags, num_tags)
+        broadcast_start = self.start_transitions.view(1,num_tags).expand(batch_size, num_tags)
 
         numerator = 0.0
         # Add up the scores for the observed segmentations
@@ -169,15 +152,61 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
             # # shape: (max_seg_len, batch_size, num_tags)
             # batched_logits = logits[j]  # .transpose(0, 1).contiguous()
             for d in range(min(self.max_span_width, sequence_length)):
+                if d>j:
+                    continue
+
                 current_tag = tags[j][d]
+
                 # Ignore tags for invalid spans.
                 valid_tag_mask = (current_tag != default_tags).float()
                 # Reshape for gather operation to follow.
                 current_tag = current_tag.view(batch_size, 1)
+
+                if d == j:
+                    transition_score = broadcast_start.gather(1, current_tag).squeeze(1)
+                else:
+                    prev_tag = tags[j-d-1]
+                    prev_tag = prev_tag.transpose(0,1).contiguous() #batch size, max span width
+                    transition_score = (
+                        broadcast_transitions
+                        # Choose the current_tag-th row for each input
+                        .gather(2, prev_tag.view(batch_size, self.max_span_width, 1, 1).expand(batch_size, self.max_span_width, 1, num_tags))
+                        # Squeeze down to (batch_size, num_tags)
+                        .squeeze(2)
+                        # Then choose the next_tag-th column for each of those
+                        .gather(2, current_tag.view(batch_size, 1, 1).expand(batch_size, self.max_span_width, 1))
+                        # And squeeze down to (batch_size,self.max_span_width)
+                        .squeeze(2)
+                    )
+                    valid_transition_mask = (prev_tag != default_tags.view(batch_size,1).expand(batch_size,self.max_span_width)).float()
+                    transition_score = torch.sum(valid_transition_mask * transition_score,1)
                 # The score for using current_tag
                 emit_score = logits[j][d].gather(dim=1, index=current_tag).squeeze(
                     1) * valid_tag_mask * mask[j]
-                numerator += emit_score
+                score = transition_score*mask[j] + emit_score
+                
+                numerator += score
+
+        last_tag_index = mask.sum(0).long() - 1 # batch size
+        # print("last tag index: ",last_tag)
+        # print(last_tag_index.shape)
+        last_tags = tags.gather(0, last_tag_index.view(1,1,batch_size).expand(1,self.max_span_width,batch_size)).squeeze(0).transpose(0, 1).contiguous() # (batch_size,max_span_width)
+        # print(last_tags.shape)
+        broadcast_end = self.end_transitions.view(1,1,num_tags).expand(batch_size, self.max_span_width, num_tags)
+        last_transition_score = (
+            broadcast_end
+            .gather(2, last_tags.view(batch_size, self.max_span_width, 1)) # batch_size, self.max_span_width, 1
+            .squeeze(2)
+        )
+        valid_transition_mask = (last_tags != default_tags.view(batch_size,1).expand(batch_size,self.max_span_width)).float()
+        # for d in range(min(self.max_span_width, sequence_length)):
+        #     last_tag = last_tags[d,:]
+        #     valid_tag_mask = (last_tag != default_tags).float()
+        #     last_tag = last_tag.view(batch_size,1)
+        last_transition_score = torch.sum(valid_transition_mask * last_transition_score,1)
+        numerator += transition_score
+        # print(numerator)
+
         return numerator
 
     def forward(self,
@@ -199,34 +228,25 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         batch_size = inputs.size(0)
         log_numerator = self._joint_likelihood(inputs, tags, mask)
 
-        # if self.loss_type == "roc":
-        #     cost = self._get_recall_oriented_cost(tags)
-        # elif self.loss_type == "hamming":
-        #     cost = self._get_hamming_cost(tags)
-        # elif self.loss_type == "logloss":
-        #     zeroes = 1 - ones_like(inputs)
-        #     cost = zeroes
-        # else:
-        #     raise ConfigurationError(
-        #         "invalid loss type {} - use roc, hamming or logloss".format(self.loss_type))
+        if self.loss_type == "roc":
+            cost = self._get_recall_oriented_cost(tags)
+        elif self.loss_type == "hamming":
+            cost = self._get_hamming_cost(tags)
+        elif self.loss_type == "logloss":
+            zeroes = 1 - ones_like(inputs)
+            cost = zeroes
+        else:
+            raise ConfigurationError(
+                "invalid loss type {} - use roc, hamming or logloss".format(self.loss_type))
 
         log_denominator = self._input_likelihood(logits=inputs,
                                                  text_mask=mask,
-                                                 tag_mask=tag_mask)
-        log_loss = log_numerator - log_denominator.squeeze(0)
-        # print("#####################################################")
-        # print(log_numerator.data, log_denominator.data)
-        # print(tags[0].data.tolist())
-        # print(inputs[0].data.tolist())
-        # print(mask[0].data.tolist)
-        #     print(log_numerator[0].data, log_denominator.squeeze(0)[0].data)
-        # else:
-        #     print("-----------------------------------------------------")
-        #     print(tags[0].data.tolist())
-        #     print(log_numerator[0].data, log_denominator.squeeze(0)[0].data)
-        # if self.loss_type == "roc":
-        #     log_loss = log_loss - self.false_negative_penalty * \
-        #         self._get_labeled_spans_count(tags)
+                                                 tag_mask=tag_mask,
+                                                 cost=cost)
+        log_loss = log_numerator - log_denominator
+        if self.loss_type == "roc":
+            log_loss = log_loss - self.false_negative_penalty * \
+                self._get_labeled_spans_count(tags)
 
         batch_loss = torch.sum(log_loss)
         if average_batches:
@@ -313,7 +333,6 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         # Get the tensors out of the variables
         logits, mask, tag_masks = logits.data, mask.data, tag_masks.data
         sequence_lengths = torch.sum(mask, dim=-1)
-        logits[:,:,:,self.default_tag] = float("-inf")
 
         all_tags = []
         all_scores = []
@@ -364,7 +383,6 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
         # Get the tensors out of the variables
         logits, mask, tag_masks = logits.data, mask.data, tag_masks.data
         sequence_lengths = torch.sum(mask, dim=-1)
-        logits[:,:,:,self.default_tag] = float("-inf")
 
         all_tags = []
         all_scores = []
@@ -387,7 +405,6 @@ class SemiMarkovConditionalRandomField(torch.nn.Module):
             # shape: (batch_size, max_seq_length, max_span_width, num_classes)
             all_scores.append(scores)
 
-        # print("all score: ",all_scores[0])
         return torch.Tensor(all_tags), torch.Tensor(all_scores)
 
     def viterbi_decode(self, logits: torch.Tensor, tag_mask: torch.Tensor):
